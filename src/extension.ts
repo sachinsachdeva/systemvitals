@@ -1,6 +1,7 @@
 'use strict';
 import { window, ExtensionContext, StatusBarAlignment, StatusBarItem, workspace, WorkspaceConfiguration } from 'vscode';
 import { Units, DiskSpaceFormat, DiskSpaceFormatMappings, FreqMappings, MemMappings } from './constants';
+import { AppleGpuSampler } from './appleGpu';
 
 var si = require('systeminformation');
 
@@ -11,6 +12,13 @@ export function activate(context: ExtensionContext) {
 }
 
 abstract class Resource {
+    // Note: a WorkspaceConfiguration is an immutable snapshot, and this one is
+    // handed over once when ResMon constructs the resource. The refreshed
+    // configuration that ResMon.update() fetches each tick never reaches here,
+    // so every resource-level setting (show.*, show.precision, freq.unit,
+    // gpu.unit, disk.*) is fixed at activation and needs a window reload to
+    // take effect. Only alignLeft, color and updatefrequencyms, which ResMon
+    // reads off its own copy, apply live.
     protected _config: WorkspaceConfiguration;
     protected _isShownByDefault: boolean;
     protected _configKey: string;
@@ -104,6 +112,65 @@ class CpuFreq extends Resource {
         var unit = this._config.get('freq.unit', "GHz");
         var freqDivisor: number = FreqMappings[unit];
         return `${(speedHz / freqDivisor).toFixed(this.getPrecision())} ${unit}`;
+    }
+}
+
+/**
+ * Base for the macOS GPU metrics, which all come from one IOKit registry read.
+ *
+ * Availability is decided by whether the machine actually reports statistics
+ * rather than by checking the architecture, so this covers Apple Silicon and
+ * Intel Macs alike and stays hidden anywhere the data is missing.
+ */
+abstract class AppleGpuResource extends Resource {
+    protected _sampler: AppleGpuSampler;
+
+    constructor(config: WorkspaceConfiguration, isShownByDefault: boolean, configKey: string, sampler: AppleGpuSampler) {
+        super(config, isShownByDefault, configKey);
+        this._sampler = sampler;
+    }
+
+    protected async isShown(): Promise<boolean> {
+        // The sampler caches briefly, so this read and the one in getDisplay()
+        // share a single ioreg invocation.
+        let stats = await this._sampler.sample();
+        return stats !== null && this._config.get(`show.${this._configKey}`, this._isShownByDefault);
+    }
+}
+
+class GpuUsage extends AppleGpuResource {
+
+    constructor(config: WorkspaceConfiguration, sampler: AppleGpuSampler) {
+        super(config, true, "gpu", sampler);
+    }
+
+    async getDisplay(): Promise<string> {
+        let stats = await this._sampler.sample();
+        if (stats === null) {
+            return "";
+        }
+        return `$(circuit-board) ${(stats.utilization).toFixed(this.getPrecision())}%`;
+    }
+}
+
+class GpuMemory extends AppleGpuResource {
+
+    constructor(config: WorkspaceConfiguration, sampler: AppleGpuSampler) {
+        super(config, false, "gpumem", sampler);
+    }
+
+    async getDisplay(): Promise<string> {
+        let stats = await this._sampler.sample();
+        if (stats === null) {
+            return "";
+        }
+        let unit = this._config.get('gpu.unit', "GB");
+        var memDivisor = MemMappings[unit];
+        // Apple Silicon shares system memory with the CPU, so this is memory
+        // currently mapped out of memory the driver has claimed, not VRAM.
+        let inUseWithUnits = stats.inUseMemory / memDivisor;
+        let allocatedWithUnits = stats.allocatedMemory / memDivisor;
+        return `$(server) ${(inUseWithUnits).toFixed(this.getPrecision())}/${(allocatedWithUnits).toFixed(this.getPrecision())} ${unit}`;
     }
 }
 
@@ -234,10 +301,16 @@ class ResMon {
         this._statusBarItem.color = this._getColor();
         this._statusBarItem.show();
 
+        // The GPU resources share one sampler so that a tick costs a single
+        // read of the IOKit registry rather than one per resource.
+        let gpuSampler = new AppleGpuSampler();
+
         // Add all resources to monitor
         this._resources = [];
         this._resources.push(new CpuUsage(this._config));
         this._resources.push(new CpuFreq(this._config));
+        this._resources.push(new GpuUsage(this._config, gpuSampler));
+        this._resources.push(new GpuMemory(this._config, gpuSampler));
         this._resources.push(new Battery(this._config));
         this._resources.push(new Memory(this._config));
         this._resources.push(new DiskSpace(this._config));

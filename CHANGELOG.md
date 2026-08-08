@@ -1,5 +1,8 @@
 # Change Log
 
+## [1.0.8]
+- Added GPU utilization and GPU memory monitoring on macOS, including Apple Silicon (M-series). Statistics are read from the IOKit registry via `ioreg`, which needs no elevated privileges. Both metrics hide themselves automatically on machines that do not report GPU statistics.
+
 ## [1.0.7]
 - Changed underlying CPU frequency API, added hiding battery/CPU temp information if the device lacks a battery/doesn't support CPU temp sensing, added some clarifications about CPU frequency behavior on Windows.
 

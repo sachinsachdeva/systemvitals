@@ -2,7 +2,7 @@
     "name": "resourcemonitor",
     "displayName": "Resource Monitor",
     "description": "Displays current CPU stats, memory/disk consumption, and battery percentage remaining.",
-    "version": "1.0.7",
+    "version": "1.0.8",
     "publisher": "mutantdino",
     "engines": {
         "vscode": "^1.25.0"
@@ -53,6 +53,27 @@
                     "type": "boolean",
                     "default": false,
                     "description": "Toggles the display of CPU temperature. May not work without the lm-sensors module on Linux. May require running VS Code as admin on Windows"
+                },
+                "resmon.show.gpu": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Toggles the display of GPU utilization. macOS only; automatically hidden on machines that do not report GPU statistics. Requires a window reload to take effect."
+                },
+                "resmon.show.gpumem": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Toggles the display of GPU memory in use. macOS only; automatically hidden on machines that do not report GPU statistics. Requires a window reload to take effect."
+                },
+                "resmon.gpu.unit": {
+                    "type": "string",
+                    "enum": [
+                        "GB",
+                        "MB",
+                        "KB",
+                        "B"
+                    ],
+                    "default": "GB",
+                    "description": "Unit used for GPU memory."
                 },
                 "resmon.disk.format": {
                     "type": "string",
