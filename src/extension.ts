@@ -1,6 +1,7 @@
 'use strict';
-import { window, ExtensionContext, StatusBarAlignment, StatusBarItem, workspace, WorkspaceConfiguration } from 'vscode';
-import { Units, DiskSpaceFormat, DiskSpaceFormatMappings, FreqMappings, MemMappings } from './constants';
+import { window, Disposable, ExtensionContext, StatusBarAlignment, StatusBarItem, workspace, WorkspaceConfiguration } from 'vscode';
+import { Units, UnitLabels, DiskSpaceFormat, DiskSpaceFormatMappings, FreqMappings, MemMappings } from './constants';
+import { AppleGpuSampler } from './appleGpu';
 
 var si = require('systeminformation');
 
@@ -11,6 +12,9 @@ export function activate(context: ExtensionContext) {
 }
 
 abstract class Resource {
+    // A WorkspaceConfiguration is an immutable snapshot, so this is replaced
+    // via setConfig() on every update tick. Holding the object handed over at
+    // construction would freeze every resource-level setting at activation.
     protected _config: WorkspaceConfiguration;
     protected _isShownByDefault: boolean;
     protected _configKey: string;
@@ -20,6 +24,26 @@ abstract class Resource {
         this._config = config;
         this._isShownByDefault = isShownByDefault;
         this._configKey = configKey;
+        this._maxWidth = 0;
+    }
+
+    /**
+     * Points this resource at a freshly read configuration, so that changed
+     * settings apply on the next tick rather than at the next window reload.
+     */
+    public setConfig(config: WorkspaceConfiguration) {
+        this._config = config;
+    }
+
+    /**
+     * Clears the padding high water mark.
+     *
+     * _maxWidth only ever grows, which is what stops the status bar jittering
+     * as digits come and go. It does mean a setting that shortens the display,
+     * such as switching memory from B to GB, would otherwise leave a gap at the
+     * old width for the rest of the session.
+     */
+    public resetWidth() {
         this._maxWidth = 0;
     }
 
@@ -36,22 +60,22 @@ abstract class Resource {
         return null;
     }
 
-    protected async abstract getDisplay(): Promise<string>;
+    protected abstract getDisplay(): Promise<string>;
 
     protected async isShown(): Promise<boolean> {
-        return Promise.resolve(this._config.get(`show.${this._configKey}`, false));
+        return Promise.resolve(this._config.get(`show.${this._configKey}`, this._isShownByDefault));
     }
 
     public getPrecision(): number {
         return this._config.get("show.precision", 2);
     }
 
-    protected convertBytesToLargestUnit(bytes: number, precision: number = 2): string {
+    protected convertBytesToLargestUnit(bytes: number): string {
         let unit: Units = Units.None;
         while (bytes/unit >= 1024 && unit < Units.G) {
             unit *= 1024;
         }
-        return `${(bytes/unit).toFixed(this.getPrecision())} ${Units[unit]}`;
+        return `${(bytes/unit).toFixed(this.getPrecision())} ${UnitLabels[unit]}`;
     }
 }
 
@@ -71,14 +95,14 @@ class CpuUsage extends Resource {
 class CpuTemp extends Resource {
 
     constructor(config: WorkspaceConfiguration) {
-        super(config, true, "cputemp");
+        super(config, false, "cputemp");
     }
 
     protected async isShown(): Promise<boolean> {
         // If the CPU temp sensor cannot retrieve a valid temperature, disallow its reporting.
         var cpuTemp = (await si.cpuTemperature()).main;
         let hasCpuTemp = cpuTemp !== -1;
-        return Promise.resolve(hasCpuTemp && this._config.get("show.cputemp", true));
+        return hasCpuTemp && await super.isShown();
     }
 
     async getDisplay(): Promise<string> {
@@ -107,15 +131,74 @@ class CpuFreq extends Resource {
     }
 }
 
+/**
+ * Base for the macOS GPU metrics, which all come from one IOKit registry read.
+ *
+ * Availability is decided by whether the machine actually reports statistics
+ * rather than by checking the architecture, so this covers Apple Silicon and
+ * Intel Macs alike and stays hidden anywhere the data is missing.
+ */
+abstract class AppleGpuResource extends Resource {
+    protected _sampler: AppleGpuSampler;
+
+    constructor(config: WorkspaceConfiguration, isShownByDefault: boolean, configKey: string, sampler: AppleGpuSampler) {
+        super(config, isShownByDefault, configKey);
+        this._sampler = sampler;
+    }
+
+    protected async isShown(): Promise<boolean> {
+        // The sampler caches briefly, so this read and the one in getDisplay()
+        // share a single ioreg invocation.
+        let stats = await this._sampler.sample();
+        return stats !== null && await super.isShown();
+    }
+}
+
+class GpuUsage extends AppleGpuResource {
+
+    constructor(config: WorkspaceConfiguration, sampler: AppleGpuSampler) {
+        super(config, true, "gpu", sampler);
+    }
+
+    async getDisplay(): Promise<string> {
+        let stats = await this._sampler.sample();
+        if (stats === null) {
+            return "";
+        }
+        return `$(circuit-board) ${(stats.utilization).toFixed(this.getPrecision())}%`;
+    }
+}
+
+class GpuMemory extends AppleGpuResource {
+
+    constructor(config: WorkspaceConfiguration, sampler: AppleGpuSampler) {
+        super(config, false, "gpumem", sampler);
+    }
+
+    async getDisplay(): Promise<string> {
+        let stats = await this._sampler.sample();
+        if (stats === null) {
+            return "";
+        }
+        let unit = this._config.get('gpu.unit', "GB");
+        var memDivisor = MemMappings[unit];
+        // Apple Silicon shares system memory with the CPU, so this is memory
+        // currently mapped out of memory the driver has claimed, not VRAM.
+        let inUseWithUnits = stats.inUseMemory / memDivisor;
+        let allocatedWithUnits = stats.allocatedMemory / memDivisor;
+        return `$(server) ${(inUseWithUnits).toFixed(this.getPrecision())}/${(allocatedWithUnits).toFixed(this.getPrecision())} ${unit}`;
+    }
+}
+
 class Battery extends Resource {
 
     constructor(config: WorkspaceConfiguration) {
-        super(config, false, "battery");
+        super(config, true, "battery");
     }
 
     protected async isShown(): Promise<boolean> {
         let hasBattery = (await si.battery()).hasbattery;
-        return Promise.resolve(hasBattery && this._config.get("show.battery", false));
+        return hasBattery && await super.isShown();
     }
 
     async getDisplay(): Promise<string> {
@@ -132,37 +215,12 @@ class Memory extends Resource {
     }
     
     async getDisplay() : Promise<string> {
-        let unit = this._config.get('memunit', "GB");
+        let unit = this._config.get('mem.unit', "GB");
         var memDivisor = MemMappings[unit];
         let memoryData = await si.mem();
         let memoryUsedWithUnits = memoryData.active / memDivisor;
         let memoryTotalWithUnits = memoryData.total / memDivisor;
         return `$(ellipsis) ${(memoryUsedWithUnits).toFixed(this.getPrecision())}/${(memoryTotalWithUnits).toFixed(this.getPrecision())} ${unit}`;
-    }
-}
-
-class Network extends Resource {
-
-    constructor(config: WorkspaceConfiguration) {
-        super(config, true, "net");
-    
-        // Network stats are requested through returning the delta between
-        // multiple invocations
-        this.getInterfaceStats();
-    }
-
-    async getInterfaceStats() : Promise<any> {
-        let networkInterfaces = await si.networkInterfaces();
-        for (let networkInterface in networkInterfaces) {
-            console.log(networkInterface);
-            let networkStats = await si.networkStats(networkInterface);
-            console.log(networkStats);
-        }
-    }
-
-    async getDisplay(): Promise<string> {
-        // Not implemented
-        return ""; 
     }
 }
 
@@ -225,24 +283,38 @@ class ResMon {
     private _delimiter: string;
     private _updating: boolean;
     private _resources: Resource[];
+    private _configListener: Disposable;
 
     constructor() {
-        this._config = workspace.getConfiguration('resmon');
+        this._config = workspace.getConfiguration('systemvitals');
         this._delimiter = "    ";
         this._updating = false;
         this._statusBarItem = window.createStatusBarItem(this._config.get('alignLeft') ? StatusBarAlignment.Left : StatusBarAlignment.Right);
         this._statusBarItem.color = this._getColor();
         this._statusBarItem.show();
 
+        // The GPU resources share one sampler so that a tick costs a single
+        // read of the IOKit registry rather than one per resource.
+        let gpuSampler = new AppleGpuSampler();
+
         // Add all resources to monitor
         this._resources = [];
         this._resources.push(new CpuUsage(this._config));
         this._resources.push(new CpuFreq(this._config));
+        this._resources.push(new GpuUsage(this._config, gpuSampler));
+        this._resources.push(new GpuMemory(this._config, gpuSampler));
         this._resources.push(new Battery(this._config));
         this._resources.push(new Memory(this._config));
         this._resources.push(new DiskSpace(this._config));
         this._resources.push(new CpuTemp(this._config));
-        this._resources.push(new Network(this._config));
+
+        // Settings that shorten a resource's display would otherwise leave the
+        // status bar padded out at the old width for the rest of the session.
+        this._configListener = workspace.onDidChangeConfiguration(event => {
+            if (event.affectsConfiguration('systemvitals')) {
+                this._resources.forEach(resource => resource.resetWidth());
+            }
+        });
     }
 
     public StartUpdating() {
@@ -270,8 +342,12 @@ class ResMon {
     private async update() {
         if (this._updating) {
 
-            // Update the configuration in case it has changed
-            this._config = workspace.getConfiguration('resmon');
+            // Update the configuration in case it has changed. A
+            // WorkspaceConfiguration is a snapshot, so the resources need to be
+            // pointed at the new one or they would keep reading activation-time
+            // values.
+            this._config = workspace.getConfiguration('systemvitals');
+            this._resources.forEach(resource => resource.setConfig(this._config));
 
             // Update the status bar item's styling
             let proposedAlignment = this._config.get('alignLeft') ? StatusBarAlignment.Left : StatusBarAlignment.Right;
@@ -299,6 +375,7 @@ class ResMon {
 
     dispose() {
         this.StopUpdating();
+        this._configListener.dispose();
         this._statusBarItem.dispose();
     }
 }

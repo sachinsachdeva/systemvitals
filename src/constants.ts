@@ -36,6 +36,15 @@ export var FreqMappings: UnitLookup = {
     "Hz": Units.None,
 };
 
+// Units[Units.G] yields "G", and Units[Units.None] yields "None", neither of
+// which is a unit anyone wants to read in a status bar.
+export var UnitLabels: { [unit: number]: string } = {
+    [Units.None]: "B",
+    [Units.K]: "KB",
+    [Units.M]: "MB",
+    [Units.G]: "GB",
+};
+
 export var MemMappings: UnitLookup = {
     "GB": Units.G,
     "MB": Units.M,
