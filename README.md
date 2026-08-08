@@ -12,9 +12,11 @@ Display CPU frequency and usage, GPU utilization, memory consumption, disk space
 - **Disk** — space remaining or used, per drive
 - **Battery** — percentage remaining, hidden automatically on devices without a battery
 
-## Screenshots
+## Screenshot
 
-![Disk space feature](images/disk_space_screenshot.png).
+![System Vitals in the VS Code status bar](images/statusbar.png)
+
+CPU usage, CPU frequency, GPU utilization and memory, running on an Apple Silicon Mac. GPU memory, disk space and CPU temperature are available as well, and are off by default.
 
 ## Requirements
 
