@@ -1,8 +1,16 @@
-# Resource Monitor
+# System Vitals
+
+Display CPU frequency and usage, GPU utilization, memory consumption, disk space, and battery percentage in the VS Code status bar — including **native Apple Silicon GPU monitoring**, which needs no elevated privileges.
+
+> **A fork.** System Vitals is a fork of [resmon](https://github.com/Njanderson/resmon) by Nicholas Anderson, adding macOS GPU support and a modernized build. It is not affiliated with or endorsed by the original author. See [LICENSE.md](LICENSE.md) for the licensing situation, which is unresolved because the upstream project declares no license.
 
 ## Features
 
-Display CPU frequency, usage, memory consumption, GPU utilization, and battery percentage remaining within the VSCode status bar.
+- **CPU** — usage percentage and current frequency
+- **GPU** — utilization and memory in use (macOS, including M-series Apple Silicon)
+- **Memory** — consumed out of total
+- **Disk** — space remaining or used, per drive
+- **Battery** — percentage remaining, hidden automatically on devices without a battery
 
 ## Screenshots
 
@@ -10,7 +18,7 @@ Display CPU frequency, usage, memory consumption, GPU utilization, and battery p
 
 ## Requirements
 
-Just the system information node module.
+None beyond VS Code 1.53 or newer. The `systeminformation` module is bundled with the extension, and macOS GPU statistics are read from the IOKit registry with `ioreg`, which requires no additional software and no elevated privileges.
 
 ## Extension Settings
 
@@ -54,36 +62,4 @@ A better solution for Windows CPU Usage would be great. I investigated alternati
 
 ## Change Log
 
-### [1.0.8]
-- Added GPU utilization and GPU memory monitoring on macOS, including Apple Silicon (M-series).
-
-### [1.0.7]
-- Changed underlying CPU frequency API, added hiding battery/CPU temp information if the device lacks a battery/doesn't support CPU temp sensing, added some clarifications about CPU frequency behavior on Windows.
-
-### [1.0.6]
-
-- Added DiskSpace, CPU Temperature. Adjusted battery icon.
-
-### [1.0.5]
-
-- Refactored code heavily, addressed Github issue with memory.used versus memory.active.
-
-### [1.0.4]
-
-- Added icon for store.
-
-### [1.0.3]
-
-- Changed icons. Added choosable units.
-
-### [1.0.2]
-
-- Actually properly added systeminformation as a real dependency.
-
-### [1.0.1]
-
-- Properly added systeminformation as a real dependency
-
-### [1.0.0]
-
-- Initial release
+See [CHANGELOG.md](CHANGELOG.md).

@@ -44,7 +44,7 @@ abstract class Resource {
         return null;
     }
 
-    protected async abstract getDisplay(): Promise<string>;
+    protected abstract getDisplay(): Promise<string>;
 
     protected async isShown(): Promise<boolean> {
         return Promise.resolve(this._config.get(`show.${this._configKey}`, false));

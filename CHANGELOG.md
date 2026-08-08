@@ -1,28 +1,38 @@
 # Change Log
 
-## [1.0.8]
-- Added GPU utilization and GPU memory monitoring on macOS, including Apple Silicon (M-series). Statistics are read from the IOKit registry via `ioreg`, which needs no elevated privileges. Both metrics hide themselves automatically on machines that do not report GPU statistics.
+## [1.0.0]
 
-## [1.0.7]
+First release of System Vitals, forked from [resmon](https://github.com/Njanderson/resmon) 1.0.7.
+
+- Added GPU utilization and GPU memory monitoring on macOS, including Apple Silicon (M-series). Statistics are read from the IOKit registry via `ioreg`, which needs no elevated privileges. Both metrics hide themselves automatically on machines that do not report GPU statistics.
+- Fixed `systeminformation` being pruned from the packaged extension, which produced a build that failed at activation once installed.
+- Changed activation from `*` to `onStartupFinished`, so the extension no longer delays editor startup. This raises the minimum VS Code version to 1.53.
+- Modernized the build: TypeScript 5, `@types/vscode` in place of the deprecated `vscode` module, and no `postinstall` hook.
+
+## Inherited history
+
+Releases below are from the upstream resmon project, retained for context.
+
+### [1.0.7]
 - Changed underlying CPU frequency API, added hiding battery/CPU temp information if the device lacks a battery/doesn't support CPU temp sensing, added some clarifications about CPU frequency behavior on Windows.
 
-## [1.0.6]
+### [1.0.6]
 - Added DiskSpace, CPU Temperature. Adjusted battery icon.
 
-## [1.0.5]
+### [1.0.5]
 - Refactored code heavily, addressed Github issue with memory.used versus memory.active.
 
-## [1.0.4]
+### [1.0.4]
 - Added icon for store.
 
-## [1.0.3]
+### [1.0.3]
 - Changed icons. Added choosable units.
 
-## [1.0.2]
+### [1.0.2]
 - Actually properly added systeminformation as a real dependency.
 
-## [1.0.1]
+### [1.0.1]
 - Properly added systeminformation as a real dependency
 
-## [1.0.0]
+### [1.0.0]
 - Initial release

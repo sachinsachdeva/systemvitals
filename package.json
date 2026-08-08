@@ -1,28 +1,36 @@
 {
-    "name": "resourcemonitor",
-    "displayName": "Resource Monitor",
-    "description": "Displays current CPU stats, memory/disk consumption, and battery percentage remaining.",
-    "version": "1.0.8",
-    "publisher": "mutantdino",
+    "name": "system-vitals",
+    "displayName": "System Vitals",
+    "description": "CPU, GPU, memory, disk and battery monitoring in the VS Code status bar, with native Apple Silicon GPU support.",
+    "version": "1.0.0",
+    "publisher": "sachinsachdeva",
+    "license": "SEE LICENSE IN LICENSE.md",
     "engines": {
-        "vscode": "^1.25.0"
+        "vscode": "^1.53.0"
     },
     "categories": [
         "Other"
     ],
+    "keywords": [
+        "monitor",
+        "cpu",
+        "gpu",
+        "memory",
+        "apple silicon"
+    ],
     "icon": "images/icon.png",
     "galleryBanner": {
-        "color": "#008080",
+        "color": "#0F172A",
         "theme": "dark"
     },
     "activationEvents": [
-        "*"
+        "onStartupFinished"
     ],
     "main": "./out/extension",
     "contributes": {
         "configuration": {
             "type": "object",
-            "title": "Resource Monitor",
+            "title": "System Vitals",
             "properties": {
                 "resmon.show.cpuusage": {
                     "type": "boolean",
@@ -141,12 +149,16 @@
         }
     },
     "repository": {
-        "url": "https://github.com/Njanderson/resmon.git"
+        "type": "git",
+        "url": "https://github.com/sachinsachdeva/resmon.git"
     },
+    "bugs": {
+        "url": "https://github.com/sachinsachdeva/resmon/issues"
+    },
+    "homepage": "https://github.com/sachinsachdeva/resmon#readme",
     "scripts": {
         "vscode:prepublish": "npm run compile",
         "compile": "tsc -p ./",
-        "postinstall": "node ./node_modules/vscode/bin/install",
         "watch": "tsc -watch -p ./"
     },
     "dependencies": {
@@ -154,9 +166,9 @@
     },
     "devDependencies": {
         "@types/mocha": "^2.2.42",
-        "@types/node": "^7.0.43",
+        "@types/node": "^20.19.43",
+        "@types/vscode": "1.53.0",
         "tslint": "^5.8.0",
-        "typescript": "^2.6.1",
-        "vscode": "^1.1.6"
+        "typescript": "^5.9.3"
     }
 }
