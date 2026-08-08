@@ -4,6 +4,7 @@
 
 First release of System Vitals, forked from [resmon](https://github.com/Njanderson/resmon) 1.0.7.
 
+- Settings moved from the `resmon.*` namespace to `systemvitals.*`. If you are coming from resmon, your existing settings will not carry over and need to be set again. This keeps the two extensions independent when both are installed, rather than sharing one set of keys.
 - Added GPU utilization and GPU memory monitoring on macOS, including Apple Silicon (M-series). Statistics are read from the IOKit registry via `ioreg`, which needs no elevated privileges. Both metrics hide themselves automatically on machines that do not report GPU statistics.
 - Fixed `systeminformation` being pruned from the packaged extension, which produced a build that failed at activation once installed.
 - Changed activation from `*` to `onStartupFinished`, so the extension no longer delays editor startup. This raises the minimum VS Code version to 1.53.

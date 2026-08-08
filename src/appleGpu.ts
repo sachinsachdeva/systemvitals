@@ -29,7 +29,7 @@ const IOREG_MAX_BUFFER: number = 4 * 1024 * 1024;
 // Two resources each ask whether they are shown and then what to display, so a
 // single tick reads the sampler four times. Collapsing those into one ioreg
 // invocation keeps the cost at ~20ms per tick. The 200ms floor on
-// resmon.updatefrequencyms guarantees this window never spans two ticks.
+// systemvitals.updatefrequencyms guarantees this window never spans two ticks.
 const CACHE_WINDOW_MS: number = 100;
 
 const PERFORMANCE_STATISTICS_PATTERN = /"PerformanceStatistics" = \{([^}]*)\}/;

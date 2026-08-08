@@ -294,7 +294,7 @@ class ResMon {
     private _resources: Resource[];
 
     constructor() {
-        this._config = workspace.getConfiguration('resmon');
+        this._config = workspace.getConfiguration('systemvitals');
         this._delimiter = "    ";
         this._updating = false;
         this._statusBarItem = window.createStatusBarItem(this._config.get('alignLeft') ? StatusBarAlignment.Left : StatusBarAlignment.Right);
@@ -344,7 +344,7 @@ class ResMon {
         if (this._updating) {
 
             // Update the configuration in case it has changed
-            this._config = workspace.getConfiguration('resmon');
+            this._config = workspace.getConfiguration('systemvitals');
 
             // Update the status bar item's styling
             let proposedAlignment = this._config.get('alignLeft') ? StatusBarAlignment.Left : StatusBarAlignment.Right;

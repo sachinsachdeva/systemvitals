@@ -32,47 +32,47 @@
             "type": "object",
             "title": "System Vitals",
             "properties": {
-                "resmon.show.cpuusage": {
+                "systemvitals.show.cpuusage": {
                     "type": "boolean",
                     "default": true,
                     "description": "Toggles the display of CPU Usage."
                 },
-                "resmon.show.cpufreq": {
+                "systemvitals.show.cpufreq": {
                     "type": "boolean",
                     "default": true,
                     "description": "Toggles the display of CPU frequency. For Windows, this displays the maximum clock speed."
                 },
-                "resmon.show.mem": {
+                "systemvitals.show.mem": {
                     "type": "boolean",
                     "default": true,
                     "description": "Toggles the display of memory consumption."
                 },
-                "resmon.show.battery": {
+                "systemvitals.show.battery": {
                     "type": "boolean",
                     "default": true,
                     "description": "Toggles the display of battery percentage remaining if a device with a battery. If the device reports not having a battery, this setting will always be treated as false."
                 },
-                "resmon.show.disk": {
+                "systemvitals.show.disk": {
                     "type": "boolean",
                     "default": false,
                     "description": "Toggles the display of disk space information."
                 },
-                "resmon.show.cputemp": {
+                "systemvitals.show.cputemp": {
                     "type": "boolean",
                     "default": false,
                     "description": "Toggles the display of CPU temperature. May not work without the lm-sensors module on Linux. May require running VS Code as admin on Windows"
                 },
-                "resmon.show.gpu": {
+                "systemvitals.show.gpu": {
                     "type": "boolean",
                     "default": true,
                     "description": "Toggles the display of GPU utilization. macOS only; automatically hidden on machines that do not report GPU statistics. Requires a window reload to take effect."
                 },
-                "resmon.show.gpumem": {
+                "systemvitals.show.gpumem": {
                     "type": "boolean",
                     "default": false,
                     "description": "Toggles the display of GPU memory in use. macOS only; automatically hidden on machines that do not report GPU statistics. Requires a window reload to take effect."
                 },
-                "resmon.gpu.unit": {
+                "systemvitals.gpu.unit": {
                     "type": "string",
                     "enum": [
                         "GB",
@@ -83,7 +83,7 @@
                     "default": "GB",
                     "description": "Unit used for GPU memory."
                 },
-                "resmon.disk.format": {
+                "systemvitals.disk.format": {
                     "type": "string",
                     "enum": [
                         "PercentRemaining",
@@ -93,7 +93,7 @@
                     ],
                     "description": "Configures how the disk space is displayed (percentage remaining/used, absolute remaining, used out of totel)."
                 },
-                "resmon.disk.drives": {
+                "systemvitals.disk.drives": {
                     "type": "array",
                     "items": {
                         "type": "string"
@@ -102,13 +102,13 @@
                     "default": [],
                     "description": "Drives to show. For example, 'C:' on Windows, and '/dev/sda1' on Linux."
                 },
-                "resmon.updatefrequencyms": {
+                "systemvitals.updatefrequencyms": {
                     "type": "number",
                     "default": 2000,
                     "minimum": 200,
                     "description": "How long in ms between updates to resources."
                 },
-                "resmon.freq.unit": {
+                "systemvitals.freq.unit": {
                     "type": "string",
                     "enum": [
                         "GHz",
@@ -118,7 +118,7 @@
                     ],
                     "default": "GHz"
                 },
-                "resmon.mem.unit": {
+                "systemvitals.mem.unit": {
                     "type": "string",
                     "enum": [
                         "GB",
@@ -128,19 +128,19 @@
                     ],
                     "default": "GB"
                 },
-                "resmon.show.precision": {
+                "systemvitals.show.precision": {
                     "type": "number",
                     "default": 2,
                     "minimum": 0,
                     "maximum": 2,
                     "description": "How long in ms between updates to resources."
                 },
-                "resmon.alignLeft": {
+                "systemvitals.alignLeft": {
                     "type": "boolean",
                     "default": true,
                     "description": "Toggles the alignment of the status bar."
                 },
-                "resmon.color": {
+                "systemvitals.color": {
                     "type": "string",
                     "default": "#FFFFFF",
                     "description": "Color of the status bar text in hex code (for example, #FFFFFF is white). The color must be in the format #RRGGBB, using hex digits."
