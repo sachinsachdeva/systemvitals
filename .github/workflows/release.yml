@@ -61,16 +61,75 @@ jobs:
             exit 1
           fi
 
+      # vsce's exit code is not a reliable signal on its own. The gallery can
+      # time out after it has already accepted the upload, so a failure may
+      # mean the version published; and a success only means the upload was
+      # accepted, not that the version is visible, because validation takes
+      # minutes. Both happened while releasing 1.0.1. So the gallery itself is
+      # treated as the source of truth, and vsce's exit code only decides
+      # whether a retry is worth attempting.
       - name: Publish to the VS Code Marketplace
         if: startsWith(github.ref, 'refs/tags/v')
+        timeout-minutes: 25
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          EXTENSION_ID: SachinSachdeva.system-vitals
         run: |
+          set -u
           if [ -z "$VSCE_PAT" ]; then
             echo "VSCE_PAT secret is not set; add it under Settings > Secrets and variables > Actions"
             exit 1
           fi
-          npx --yes @vscode/vsce publish --packagePath system-vitals.vsix --pat "$VSCE_PAT"
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          # True once the gallery lists this exact version.
+          on_gallery() {
+            curl -sS --max-time 30 -X POST \
+              'https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery' \
+              -H 'Content-Type: application/json' \
+              -H 'Accept: application/json;api-version=3.0-preview.1' \
+              -d "{\"filters\":[{\"criteria\":[{\"filterType\":7,\"value\":\"$EXTENSION_ID\"}]}],\"flags\":1}" \
+              | jq -e --arg v "$VERSION" \
+                  '.results[0].extensions[0].versions[]?.version | select(. == $v)' >/dev/null 2>&1
+          }
+
+          if on_gallery; then
+            echo "$VERSION is already on the gallery; nothing to publish"
+            exit 0
+          fi
+
+          for attempt in 1 2; do
+            echo "::group::vsce publish (attempt $attempt)"
+            if npx --yes @vscode/vsce publish --packagePath system-vitals.vsix --pat "$VSCE_PAT"; then
+              echo "::endgroup::"
+              break
+            fi
+            echo "::endgroup::"
+            echo "vsce reported a failure; checking whether the upload landed anyway"
+            if on_gallery; then
+              echo "$VERSION is on the gallery despite the error, so the upload succeeded"
+              exit 0
+            fi
+            if [ "$attempt" = "2" ]; then
+              echo "publish failed twice and $VERSION is not on the gallery"
+              exit 1
+            fi
+            echo "not published; retrying in 30s"
+            sleep 30
+          done
+
+          # Upload accepted. Validation usually clears in a few minutes, but a
+          # slow validation is not a failed release, so this warns rather than
+          # failing the workflow and undoing an actual publish.
+          echo "waiting for $VERSION to clear marketplace validation"
+          for _ in $(seq 1 24); do
+            if on_gallery; then
+              echo "$VERSION is live on the marketplace"
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "::warning::$VERSION was published but has not appeared after 12 minutes; validation may still be running"
 
       - name: Attach the VSIX to a GitHub release
         if: startsWith(github.ref, 'refs/tags/v')

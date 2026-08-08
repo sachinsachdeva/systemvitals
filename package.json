@@ -3,7 +3,7 @@
     "displayName": "System Vitals",
     "description": "CPU, GPU, memory, disk and battery monitoring in the VS Code status bar, with native Apple Silicon GPU support.",
     "version": "1.0.1",
-    "publisher": "sachinsachdeva",
+    "publisher": "SachinSachdeva",
     "license": "SEE LICENSE IN LICENSE.md",
     "engines": {
         "vscode": "^1.53.0"
