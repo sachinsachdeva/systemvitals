@@ -17,4 +17,4 @@ Changes made in this fork — including the macOS GPU monitoring support in `src
 Until the upstream project adopts an explicit license, the redistribution terms for this project as a whole are unresolved. Anyone intending to redistribute it, or to rely on it in a context where licensing matters, should treat that as an open question.
 
 If you are the author of the upstream project and would like this fork changed, renamed, or taken down, please open an issue at
-<https://github.com/sachinsachdeva/resmon/issues>.
+<https://github.com/sachinsachdeva/systemvitals/issues>.

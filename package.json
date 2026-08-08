@@ -150,12 +150,12 @@
     },
     "repository": {
         "type": "git",
-        "url": "https://github.com/sachinsachdeva/resmon.git"
+        "url": "https://github.com/sachinsachdeva/systemvitals.git"
     },
     "bugs": {
-        "url": "https://github.com/sachinsachdeva/resmon/issues"
+        "url": "https://github.com/sachinsachdeva/systemvitals/issues"
     },
-    "homepage": "https://github.com/sachinsachdeva/resmon#readme",
+    "homepage": "https://github.com/sachinsachdeva/systemvitals#readme",
     "scripts": {
         "vscode:prepublish": "npm run compile",
         "compile": "tsc -p ./",
