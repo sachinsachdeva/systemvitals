@@ -65,12 +65,12 @@
                 "systemvitals.show.gpu": {
                     "type": "boolean",
                     "default": true,
-                    "description": "Toggles the display of GPU utilization. macOS only; automatically hidden on machines that do not report GPU statistics. Requires a window reload to take effect."
+                    "description": "Toggles the display of GPU utilization. macOS only; automatically hidden on machines that do not report GPU statistics."
                 },
                 "systemvitals.show.gpumem": {
                     "type": "boolean",
                     "default": false,
-                    "description": "Toggles the display of GPU memory in use. macOS only; automatically hidden on machines that do not report GPU statistics. Requires a window reload to take effect."
+                    "description": "Toggles the display of GPU memory in use. macOS only; automatically hidden on machines that do not report GPU statistics."
                 },
                 "systemvitals.gpu.unit": {
                     "type": "string",
@@ -133,7 +133,7 @@
                     "default": 2,
                     "minimum": 0,
                     "maximum": 2,
-                    "description": "How long in ms between updates to resources."
+                    "description": "Number of decimal places shown for each resource."
                 },
                 "systemvitals.alignLeft": {
                     "type": "boolean",

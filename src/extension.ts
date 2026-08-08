@@ -1,6 +1,6 @@
 'use strict';
-import { window, ExtensionContext, StatusBarAlignment, StatusBarItem, workspace, WorkspaceConfiguration } from 'vscode';
-import { Units, DiskSpaceFormat, DiskSpaceFormatMappings, FreqMappings, MemMappings } from './constants';
+import { window, Disposable, ExtensionContext, StatusBarAlignment, StatusBarItem, workspace, WorkspaceConfiguration } from 'vscode';
+import { Units, UnitLabels, DiskSpaceFormat, DiskSpaceFormatMappings, FreqMappings, MemMappings } from './constants';
 import { AppleGpuSampler } from './appleGpu';
 
 var si = require('systeminformation');
@@ -12,13 +12,9 @@ export function activate(context: ExtensionContext) {
 }
 
 abstract class Resource {
-    // Note: a WorkspaceConfiguration is an immutable snapshot, and this one is
-    // handed over once when ResMon constructs the resource. The refreshed
-    // configuration that ResMon.update() fetches each tick never reaches here,
-    // so every resource-level setting (show.*, show.precision, freq.unit,
-    // gpu.unit, disk.*) is fixed at activation and needs a window reload to
-    // take effect. Only alignLeft, color and updatefrequencyms, which ResMon
-    // reads off its own copy, apply live.
+    // A WorkspaceConfiguration is an immutable snapshot, so this is replaced
+    // via setConfig() on every update tick. Holding the object handed over at
+    // construction would freeze every resource-level setting at activation.
     protected _config: WorkspaceConfiguration;
     protected _isShownByDefault: boolean;
     protected _configKey: string;
@@ -28,6 +24,26 @@ abstract class Resource {
         this._config = config;
         this._isShownByDefault = isShownByDefault;
         this._configKey = configKey;
+        this._maxWidth = 0;
+    }
+
+    /**
+     * Points this resource at a freshly read configuration, so that changed
+     * settings apply on the next tick rather than at the next window reload.
+     */
+    public setConfig(config: WorkspaceConfiguration) {
+        this._config = config;
+    }
+
+    /**
+     * Clears the padding high water mark.
+     *
+     * _maxWidth only ever grows, which is what stops the status bar jittering
+     * as digits come and go. It does mean a setting that shortens the display,
+     * such as switching memory from B to GB, would otherwise leave a gap at the
+     * old width for the rest of the session.
+     */
+    public resetWidth() {
         this._maxWidth = 0;
     }
 
@@ -47,19 +63,19 @@ abstract class Resource {
     protected abstract getDisplay(): Promise<string>;
 
     protected async isShown(): Promise<boolean> {
-        return Promise.resolve(this._config.get(`show.${this._configKey}`, false));
+        return Promise.resolve(this._config.get(`show.${this._configKey}`, this._isShownByDefault));
     }
 
     public getPrecision(): number {
         return this._config.get("show.precision", 2);
     }
 
-    protected convertBytesToLargestUnit(bytes: number, precision: number = 2): string {
+    protected convertBytesToLargestUnit(bytes: number): string {
         let unit: Units = Units.None;
         while (bytes/unit >= 1024 && unit < Units.G) {
             unit *= 1024;
         }
-        return `${(bytes/unit).toFixed(this.getPrecision())} ${Units[unit]}`;
+        return `${(bytes/unit).toFixed(this.getPrecision())} ${UnitLabels[unit]}`;
     }
 }
 
@@ -79,14 +95,14 @@ class CpuUsage extends Resource {
 class CpuTemp extends Resource {
 
     constructor(config: WorkspaceConfiguration) {
-        super(config, true, "cputemp");
+        super(config, false, "cputemp");
     }
 
     protected async isShown(): Promise<boolean> {
         // If the CPU temp sensor cannot retrieve a valid temperature, disallow its reporting.
         var cpuTemp = (await si.cpuTemperature()).main;
         let hasCpuTemp = cpuTemp !== -1;
-        return Promise.resolve(hasCpuTemp && this._config.get("show.cputemp", true));
+        return hasCpuTemp && await super.isShown();
     }
 
     async getDisplay(): Promise<string> {
@@ -134,7 +150,7 @@ abstract class AppleGpuResource extends Resource {
         // The sampler caches briefly, so this read and the one in getDisplay()
         // share a single ioreg invocation.
         let stats = await this._sampler.sample();
-        return stats !== null && this._config.get(`show.${this._configKey}`, this._isShownByDefault);
+        return stats !== null && await super.isShown();
     }
 }
 
@@ -177,12 +193,12 @@ class GpuMemory extends AppleGpuResource {
 class Battery extends Resource {
 
     constructor(config: WorkspaceConfiguration) {
-        super(config, false, "battery");
+        super(config, true, "battery");
     }
 
     protected async isShown(): Promise<boolean> {
         let hasBattery = (await si.battery()).hasbattery;
-        return Promise.resolve(hasBattery && this._config.get("show.battery", false));
+        return hasBattery && await super.isShown();
     }
 
     async getDisplay(): Promise<string> {
@@ -199,37 +215,12 @@ class Memory extends Resource {
     }
     
     async getDisplay() : Promise<string> {
-        let unit = this._config.get('memunit', "GB");
+        let unit = this._config.get('mem.unit', "GB");
         var memDivisor = MemMappings[unit];
         let memoryData = await si.mem();
         let memoryUsedWithUnits = memoryData.active / memDivisor;
         let memoryTotalWithUnits = memoryData.total / memDivisor;
         return `$(ellipsis) ${(memoryUsedWithUnits).toFixed(this.getPrecision())}/${(memoryTotalWithUnits).toFixed(this.getPrecision())} ${unit}`;
-    }
-}
-
-class Network extends Resource {
-
-    constructor(config: WorkspaceConfiguration) {
-        super(config, true, "net");
-    
-        // Network stats are requested through returning the delta between
-        // multiple invocations
-        this.getInterfaceStats();
-    }
-
-    async getInterfaceStats() : Promise<any> {
-        let networkInterfaces = await si.networkInterfaces();
-        for (let networkInterface in networkInterfaces) {
-            console.log(networkInterface);
-            let networkStats = await si.networkStats(networkInterface);
-            console.log(networkStats);
-        }
-    }
-
-    async getDisplay(): Promise<string> {
-        // Not implemented
-        return ""; 
     }
 }
 
@@ -292,6 +283,7 @@ class ResMon {
     private _delimiter: string;
     private _updating: boolean;
     private _resources: Resource[];
+    private _configListener: Disposable;
 
     constructor() {
         this._config = workspace.getConfiguration('systemvitals');
@@ -315,7 +307,14 @@ class ResMon {
         this._resources.push(new Memory(this._config));
         this._resources.push(new DiskSpace(this._config));
         this._resources.push(new CpuTemp(this._config));
-        this._resources.push(new Network(this._config));
+
+        // Settings that shorten a resource's display would otherwise leave the
+        // status bar padded out at the old width for the rest of the session.
+        this._configListener = workspace.onDidChangeConfiguration(event => {
+            if (event.affectsConfiguration('systemvitals')) {
+                this._resources.forEach(resource => resource.resetWidth());
+            }
+        });
     }
 
     public StartUpdating() {
@@ -343,8 +342,12 @@ class ResMon {
     private async update() {
         if (this._updating) {
 
-            // Update the configuration in case it has changed
+            // Update the configuration in case it has changed. A
+            // WorkspaceConfiguration is a snapshot, so the resources need to be
+            // pointed at the new one or they would keep reading activation-time
+            // values.
             this._config = workspace.getConfiguration('systemvitals');
+            this._resources.forEach(resource => resource.setConfig(this._config));
 
             // Update the status bar item's styling
             let proposedAlignment = this._config.get('alignLeft') ? StatusBarAlignment.Left : StatusBarAlignment.Right;
@@ -372,6 +375,7 @@ class ResMon {
 
     dispose() {
         this.StopUpdating();
+        this._configListener.dispose();
         this._statusBarItem.dispose();
     }
 }

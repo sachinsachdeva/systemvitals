@@ -52,10 +52,6 @@ Linux and Windows GPU monitoring is not implemented; each would need a separate 
 
 ## Known Issues
 
-Settings are read once when the extension activates. All of the `systemvitals.show.*` toggles and the unit settings (`systemvitals.freq.unit`, `systemvitals.mem.unit`, `systemvitals.gpu.unit`, `systemvitals.disk.*`) therefore require a window reload before a change takes effect. Only `systemvitals.alignLeft`, `systemvitals.color`, and `systemvitals.updatefrequencyms` apply immediately.
-
-`systemvitals.mem.unit` is currently read under the wrong key internally and is ignored; memory is always reported in GB.
-
 A better solution for Windows CPU Usage would be great. I investigated alternatives to counting Processor Time, but none of them seemed to match the Task Manager percentage.
 
 ---
