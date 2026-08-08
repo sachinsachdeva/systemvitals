@@ -1,5 +1,11 @@
 # Change Log
 
+## [1.0.1]
+
+- Disk space is now usable on macOS without configuration. It previously listed all eight APFS volumes that macOS reports for a single physical disk, and the most obvious of them was misleading: `/` is the sealed read-only system snapshot, which reports roughly 95% free however full the machine is. The data volume is now shown in its place, labelled `/`.
+- Volumes are identified by mount point rather than device node, so entries read `/` or `/home` instead of `/dev/disk3s5`.
+- `systemvitals.disk.drives` now accepts mount points as well as device names, and still overrides the filtering entirely when set.
+
 ## [1.0.0]
 
 First release of System Vitals, forked from [resmon](https://github.com/Njanderson/resmon) 1.0.7.

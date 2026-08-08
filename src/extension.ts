@@ -2,6 +2,7 @@
 import { window, Disposable, ExtensionContext, StatusBarAlignment, StatusBarItem, workspace, WorkspaceConfiguration } from 'vscode';
 import { Units, UnitLabels, DiskSpaceFormat, DiskSpaceFormatMappings, FreqMappings, MemMappings } from './constants';
 import { AppleGpuSampler } from './appleGpu';
+import { Volume, selectVolumes, volumeLabel } from './disk';
 
 var si = require('systeminformation');
 
@@ -248,31 +249,25 @@ class DiskSpace extends Resource {
         }
     }
 
-    getFormattedDiskSpace(fsSize: any) {
+    getFormattedDiskSpace(volume: Volume) {
+        let label = volumeLabel(volume, process.platform);
         switch (this.getFormat()) {
             case DiskSpaceFormat.PercentRemaining:
-                return `${fsSize.fs} ${(100 - fsSize.use).toFixed(this.getPrecision())}% remaining`;
+                return `${label} ${(100 - volume.use).toFixed(this.getPrecision())}% remaining`;
             case DiskSpaceFormat.PercentUsed:
-                return `${fsSize.fs} ${fsSize.use.toFixed(this.getPrecision())}% used`;
+                return `${label} ${volume.use.toFixed(this.getPrecision())}% used`;
             case DiskSpaceFormat.Remaining:
-                return `${fsSize.fs} ${this.convertBytesToLargestUnit(fsSize.size - fsSize.used)} remaining`;
+                return `${label} ${this.convertBytesToLargestUnit(volume.size - volume.used)} remaining`;
             case DiskSpaceFormat.UsedOutOfTotal:
-                return `${fsSize.fs} ${this.convertBytesToLargestUnit(fsSize.used)}/${this.convertBytesToLargestUnit(fsSize.size)} used`;
+                return `${label} ${this.convertBytesToLargestUnit(volume.used)}/${this.convertBytesToLargestUnit(volume.size)} used`;
         }
     }
 
     async getDisplay(): Promise<string> {
-        let fsSizes = await si.fsSize();
-        let drives = this.getDrives();
-        var formatted = "$(database) ";
-        let formattedDrives: string[] = [];
-        for (let fsSize of fsSizes) {
-            // Drives were specified, check if this is an included drive
-            if (drives.length === 0 || drives.indexOf(fsSize.fs) !== -1) {
-                formattedDrives.push(this.getFormattedDiskSpace(fsSize));
-            }
-        }
-        return formatted + formattedDrives.join(", ");
+        let fsSizes: Volume[] = await si.fsSize();
+        let volumes = selectVolumes(fsSizes, this.getDrives(), process.platform);
+        let formattedDrives = volumes.map(volume => this.getFormattedDiskSpace(volume));
+        return "$(database) " + formattedDrives.join(", ");
     }
 }
 

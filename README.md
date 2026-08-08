@@ -34,7 +34,7 @@ None beyond VS Code 1.53 or newer. The `systeminformation` module is bundled wit
 - `systemvitals.show.gpumem`: Show GPU memory in use. macOS only; see GPU Monitoring below.
 - `systemvitals.gpu.unit`: Unit used for GPU memory (GB-B).
 - `systemvitals.disk.format`: Configures how the disk space is displayed (percentage remaining/used, absolute remaining, used out of totel).
-- `systemvitals.disk.drives`: Drives to show. For example, 'C:' on Windows, and '/dev/sda1' on Linux.
+- `systemvitals.disk.drives`: Drives to show, by mount point or device name. For example, `C:` on Windows, `/home` or `/dev/sda1` on Linux. Leave empty to pick sensible volumes automatically; see Disk Space below.
 - `systemvitals.updatefrequencyms`: How frequently to query systeminformation. The minimum is 200 ms as to prevent accidentally updating so fast as to freeze up your machine.
 - `systemvitals.freq.unit`: Unit used for the CPU frequency (GHz-Hz).
 - `systemvitals.mem.unit`: Unit used for the RAM consumption (GB-B).
@@ -51,6 +51,16 @@ GPU statistics are **macOS only**, and work on Apple Silicon (M-series) as well 
 GPU frequency and GPU power are not available, as both require `sudo powermetrics` or private APIs.
 
 Linux and Windows GPU monitoring is not implemented; each would need a separate backend (`nvidia-smi` / `/sys/class/drm`, and WMI / NVML respectively).
+
+## Disk Space
+
+Disk space is off by default. Enable it with `systemvitals.show.disk`.
+
+macOS reports eight APFS volumes for a single physical disk, so with no `disk.drives` set the extension picks the one that answers the question. That matters more than it sounds: `/` on modern macOS is the sealed, read-only system snapshot, and it reports roughly 95% free no matter how full the machine actually is. The volume holding your files is mounted at `/System/Volumes/Data`, and that is what gets shown, labelled `/`.
+
+On other platforms every real filesystem is shown. Volumes with no capacity, such as `devfs`, are skipped everywhere.
+
+To choose specific volumes yourself, set `systemvitals.disk.drives` to a list of mount points or device names. Anything listed there is shown as-is, including volumes the automatic selection would skip.
 
 ## Known Issues
 
