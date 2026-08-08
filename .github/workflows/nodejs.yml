@@ -1,28 +1,62 @@
-# This workflow will do a clean install of node dependencies, build the source code and run tests across different versions of node
-# For more information see: https://help.github.com/actions/language-and-framework-guides/using-nodejs-with-github-actions
-
-name: Node.js CI
+# Compiles the extension, lints it, and packages a VSIX to prove the published
+# artifact would actually work.
+name: CI
 
 on:
   push:
     branches: [ master ]
   pull_request:
     branches: [ master ]
+  workflow_dispatch:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     strategy:
+      fail-fast: false
       matrix:
-        node-version: [10.x, 12.x]
+        node-version: [ 20.x, 22.x ]
 
     steps:
-    - uses: actions/checkout@v2
-    - name: Use Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v1
-      with:
-        node-version: ${{ matrix.node-version }}
-    - run: npm ci
-    - run: tsc -p $GITHUB_WORKSPACE
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - run: npm ci
+
+      - name: Compile
+        run: npm run compile
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Package extension
+        run: npx --yes @vscode/vsce package --out system-vitals.vsix
+
+      # systeminformation was once listed as both a dependency and a
+      # devDependency, so vsce pruned it and shipped a VSIX with no
+      # node_modules at all. That build compiled, linted and packaged
+      # cleanly, and failed at activation on require('systeminformation').
+      # Only inspecting the artifact catches it.
+      - name: Verify the runtime dependency is bundled
+        run: |
+          if ! unzip -l system-vitals.vsix | grep -q 'node_modules/systeminformation/lib/'; then
+            echo "systeminformation is missing from the VSIX: the extension would fail on activation"
+            unzip -l system-vitals.vsix
+            exit 1
+          fi
+
+      - name: Upload VSIX
+        if: matrix.node-version == '22.x'
+        uses: actions/upload-artifact@v4
+        with:
+          name: system-vitals-vsix
+          path: system-vitals.vsix

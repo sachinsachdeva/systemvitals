@@ -159,13 +159,14 @@
     "scripts": {
         "vscode:prepublish": "npm run compile",
         "compile": "tsc -p ./",
+        "lint": "tslint -c tslint.json 'src/**/*.ts'",
+        "test": "npm run compile && node --test out/test/*.test.js",
         "watch": "tsc -watch -p ./"
     },
     "dependencies": {
         "systeminformation": "^4.27.11"
     },
     "devDependencies": {
-        "@types/mocha": "^2.2.42",
         "@types/node": "^20.19.43",
         "@types/vscode": "1.53.0",
         "tslint": "^5.8.0",
