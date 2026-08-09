@@ -1,15 +1,97 @@
 'use strict';
-import { window, Disposable, ExtensionContext, StatusBarAlignment, StatusBarItem, workspace, WorkspaceConfiguration } from 'vscode';
+import { commands, window, Disposable, ExtensionContext, MarkdownString, StatusBarAlignment, StatusBarItem, workspace, WorkspaceConfiguration } from 'vscode';
+import * as os from 'os';
 import { Units, UnitLabels, DiskSpaceFormat, DiskSpaceFormatMappings, FreqMappings, MemMappings } from './constants';
-import { AppleGpuSampler } from './appleGpu';
+import { AppleGpuSampler, GpuStats } from './appleGpu';
 import { Volume, selectVolumes, volumeLabel } from './disk';
+import { Detail, DetailRow, Section, formatCoreLoads, formatInterval, formatMinutes, renderTooltip } from './tooltip';
+import { DetailsView, PanelSection } from './panel';
 
 var si = require('systeminformation');
 
+// Clicking an entry opens the details view at that section, and clicking the
+// same one again closes it. The second command is the cross in the view's own
+// title bar.
+const DETAILS_COMMAND: string = 'systemvitals.showDetails';
+const HIDE_DETAILS_COMMAND: string = 'systemvitals.hideDetails';
+
+// The panel's per-section Settings buttons open the settings narrowed to that
+// section. The @ext: filter scopes the search to this extension, so the terms
+// below need only tell the sections apart rather than be unique across every
+// setting VS Code has.
+const SETTINGS_COMMAND: string = 'workbench.action.openSettings';
+
+/**
+ * The groups the display is divided into.
+ *
+ * Each is a status bar entry of its own, which is what gives every metric a
+ * hover that explains that metric rather than all of them, and a click that
+ * configures it. The identifiers are stable so that a section hidden from the
+ * status bar's context menu stays hidden, and the names are what that menu
+ * shows.
+ */
+const SECTION_CPU: Section = { id: 'systemvitals.cpu', name: 'CPU', icon: '$(pulse)', settingsFilter: 'cpu' };
+const SECTION_GPU: Section = { id: 'systemvitals.gpu', name: 'GPU', icon: '$(circuit-board)', settingsFilter: 'gpu' };
+const SECTION_BATTERY: Section = { id: 'systemvitals.battery', name: 'Battery', icon: '$(plug)', settingsFilter: 'battery' };
+const SECTION_MEMORY: Section = { id: 'systemvitals.memory', name: 'Memory', icon: '$(ellipsis)', settingsFilter: 'mem' };
+const SECTION_DISK: Section = { id: 'systemvitals.disk', name: 'Disk', icon: '$(database)', settingsFilter: 'disk' };
+
+/**
+ * How long between samples, when the setting says nothing.
+ *
+ * This governs the hover as well as the status bar, so that the two never
+ * disagree about the same instant. It is unhurried for a reason: VS Code
+ * redraws an open hover whenever its content changes, so a short interval
+ * leaves the details flickering and resizing under the pointer while they are
+ * being read.
+ */
+const DEFAULT_UPDATE_FREQUENCY_MS: number = 10000;
+
+/**
+ * The processor's name and core count, read once.
+ *
+ * It cannot change while VS Code is running, and os.cpus() walks every core to
+ * report it. systeminformation's si.cpu() would be the more natural source, but
+ * 4.27 throws while parsing sysctl output on Apple Silicon.
+ */
+const PROCESSOR: string = describeProcessor();
+
 export function activate(context: ExtensionContext) {
-    var resourceMonitor: ResMon = new ResMon();
+    // Asked for rather than written down, so that renaming the extension cannot
+    // leave the entries opening a settings search that matches nothing.
+    var resourceMonitor: ResMon = new ResMon(`@ext:${context.extension.id}`);
     resourceMonitor.StartUpdating();
     context.subscriptions.push(resourceMonitor);
+}
+
+function describeProcessor(): string {
+    let cores = os.cpus();
+    if (cores.length === 0) {
+        return "";
+    }
+    return `${cores[0].model} · ${cores.length} cores`;
+}
+
+/**
+ * The 1, 5 and 15 minute load averages, or null where they are meaningless.
+ *
+ * Windows has no such measure and Node reports zeroes there rather than
+ * failing, which would otherwise render as a row of convincing-looking noughts.
+ */
+function loadAverage(): string | null {
+    let averages = os.loadavg();
+    if (averages.every(average => average === 0)) {
+        return null;
+    }
+    return averages.map(average => average.toFixed(2)).join(', ');
+}
+
+/**
+ * What a resource contributes to a single update: the text it puts in the
+ * status bar, and the rows it adds to its section's hover.
+ */
+interface ResourceRender extends Detail {
+    text: string;
 }
 
 abstract class Resource {
@@ -20,12 +102,18 @@ abstract class Resource {
     protected _isShownByDefault: boolean;
     protected _configKey: string;
     protected _maxWidth: number;
+    private _section: Section;
 
-    constructor(config: WorkspaceConfiguration, isShownByDefault: boolean, configKey: string) {
+    constructor(config: WorkspaceConfiguration, isShownByDefault: boolean, configKey: string, section: Section) {
         this._config = config;
         this._isShownByDefault = isShownByDefault;
         this._configKey = configKey;
+        this._section = section;
         this._maxWidth = 0;
+    }
+
+    public getSection(): Section {
+        return this._section;
     }
 
     /**
@@ -48,20 +136,27 @@ abstract class Resource {
         this._maxWidth = 0;
     }
 
-    public async getResourceDisplay(): Promise<string | null> {
+    /**
+     * Samples this resource once, yielding both what the status bar shows and
+     * what the hover elaborates on, or null when the resource is hidden.
+     *
+     * One sample feeds both so that the hover costs no extra polling, and so
+     * the two can never disagree about the same instant.
+     */
+    public async getResourceRender(): Promise<ResourceRender | null> {
         if (await this.isShown())
         {
-            let display: string = await this.getDisplay();
-            this._maxWidth = Math.max(this._maxWidth, display.length);
+            let render: ResourceRender = await this.render();
+            this._maxWidth = Math.max(this._maxWidth, render.text.length);
 
             // Pad out to the correct length such that the length doesn't change
-            return display.padEnd(this._maxWidth, ' ');
+            return { text: render.text.padEnd(this._maxWidth, ' '), rows: render.rows, note: render.note };
         }
 
         return null;
     }
 
-    protected abstract getDisplay(): Promise<string>;
+    protected abstract render(): Promise<ResourceRender>;
 
     protected async isShown(): Promise<boolean> {
         return Promise.resolve(this._config.get(`show.${this._configKey}`, this._isShownByDefault));
@@ -78,25 +173,112 @@ abstract class Resource {
         }
         return `${(bytes/unit).toFixed(this.getPrecision())} ${UnitLabels[unit]}`;
     }
+
+    protected formatWithUnit(bytes: number, unit: string): string {
+        return `${(bytes / MemMappings[unit]).toFixed(this.getPrecision())} ${unit}`;
+    }
+
+    /**
+     * Formats a percentage, treating the unreportable as zero.
+     *
+     * Several of these figures are ratios the platform can hand back as NaN —
+     * per-core load between two samples in the same tick, or a fraction of a
+     * zero-byte volume — and "NaN%" in a status bar helps nobody.
+     */
+    protected formatPercent(value: number): string {
+        return `${(Number.isFinite(value) ? value : 0).toFixed(this.getPrecision())}%`;
+    }
 }
 
 class CpuUsage extends Resource {
 
     constructor(config: WorkspaceConfiguration) {
-        super(config, true, "cpuusage");
+        super(config, true, "cpuusage", SECTION_CPU);
     }
 
-    async getDisplay(): Promise<string> {
+    async render(): Promise<ResourceRender> {
         let currentLoad = await si.currentLoad();
-        return `$(pulse) ${(100 - currentLoad.currentload_idle).toFixed(this.getPrecision())}%`;
+        let usage = 100 - currentLoad.currentload_idle;
+
+        return {
+            text: `$(pulse) ${usage.toFixed(this.getPrecision())}%`,
+            rows: this.getRows(currentLoad, usage),
+        };
     }
 
+    private getRows(currentLoad: any, usage: number): DetailRow[] {
+        let rows: DetailRow[] = [];
+
+        if (PROCESSOR !== "") {
+            rows.push({ label: "Processor", value: PROCESSOR });
+        }
+
+        // The split matters: a machine at 90% system time is usually waiting on
+        // something, where 90% user time is work getting done.
+        rows.push({
+            label: "Usage",
+            value: `${this.formatPercent(usage)} (${this.formatPercent(currentLoad.currentload_user)} user, `
+                + `${this.formatPercent(currentLoad.currentload_system)} system)`,
+        });
+
+        let cores = formatCoreLoads((currentLoad.cpus || []).map((cpu: any) => cpu.load));
+        if (cores !== "") {
+            rows.push({ label: "Cores", value: cores });
+        }
+
+        let averages = loadAverage();
+        if (averages !== null) {
+            rows.push({ label: "Load average", value: `${averages} (1, 5, 15 min)` });
+        }
+
+        return rows;
+    }
+
+}
+
+class CpuFreq extends Resource {
+    constructor(config: WorkspaceConfiguration) {
+        super(config, true, "cpufreq", SECTION_CPU);
+    }
+
+    async render(): Promise<ResourceRender> {
+        let cpuCurrentSpeed = await si.cpuCurrentspeed();
+        // systeminformation returns frequency in terms of GHz by default
+        let speedHz = parseFloat(cpuCurrentSpeed.avg) * Units.G;
+        let formattedWithUnits = this.getFormattedWithUnits(speedHz);
+
+        return {
+            text: `$(dashboard) ${(formattedWithUnits)}`,
+            rows: this.getRows(cpuCurrentSpeed, formattedWithUnits),
+        };
+    }
+
+    private getRows(cpuCurrentSpeed: any, average: string): DetailRow[] {
+        let rows: DetailRow[] = [{ label: "Frequency", value: average }];
+
+        // Identical wherever the platform reports one figure for every core,
+        // which covers Apple Silicon and most of Windows, so the spread is only
+        // worth a row when there is one.
+        if (cpuCurrentSpeed.min !== cpuCurrentSpeed.max) {
+            let slowest = this.getFormattedWithUnits(parseFloat(cpuCurrentSpeed.min) * Units.G);
+            let fastest = this.getFormattedWithUnits(parseFloat(cpuCurrentSpeed.max) * Units.G);
+            rows.push({ label: "Across cores", value: `${slowest} to ${fastest}` });
+        }
+
+        return rows;
+    }
+
+    getFormattedWithUnits(speedHz: number): string {
+        var unit = this._config.get('freq.unit', "GHz");
+        var freqDivisor: number = FreqMappings[unit];
+        return `${(speedHz / freqDivisor).toFixed(this.getPrecision())} ${unit}`;
+    }
 }
 
 class CpuTemp extends Resource {
 
     constructor(config: WorkspaceConfiguration) {
-        super(config, false, "cputemp");
+        super(config, false, "cputemp", SECTION_CPU);
     }
 
     protected async isShown(): Promise<boolean> {
@@ -106,29 +288,26 @@ class CpuTemp extends Resource {
         return hasCpuTemp && await super.isShown();
     }
 
-    async getDisplay(): Promise<string> {
+    async render(): Promise<ResourceRender> {
         let currentTemps = await si.cpuTemperature();
-        return `$(flame) ${(currentTemps.main).toFixed(this.getPrecision())} C`;
-    }
-}
+        let rows: DetailRow[] = [
+            { label: "Temperature", value: this.formatCelsius(currentTemps.main) },
+        ];
 
-class CpuFreq extends Resource {
-    constructor(config: WorkspaceConfiguration) {
-        super(config, true, "cpufreq");
+        // main is an average across packages on machines that have several, so
+        // the hottest sensor is the one that throttles first.
+        if (currentTemps.max > currentTemps.main) {
+            rows.push({ label: "Hottest sensor", value: this.formatCelsius(currentTemps.max) });
+        }
+
+        return {
+            text: `$(flame) ${this.formatCelsius(currentTemps.main)}`,
+            rows: rows,
+        };
     }
 
-    async getDisplay(): Promise<string> {
-        let cpuCurrentSpeed = await si.cpuCurrentspeed();
-        // systeminformation returns frequency in terms of GHz by default
-        let speedHz = parseFloat(cpuCurrentSpeed.avg) * Units.G;
-        let formattedWithUnits = this.getFormattedWithUnits(speedHz);
-        return `$(dashboard) ${(formattedWithUnits)}`;
-    }
-
-    getFormattedWithUnits(speedHz: number): string {
-        var unit = this._config.get('freq.unit', "GHz");
-        var freqDivisor: number = FreqMappings[unit];
-        return `${(speedHz / freqDivisor).toFixed(this.getPrecision())} ${unit}`;
+    private formatCelsius(temperature: number): string {
+        return `${(temperature).toFixed(this.getPrecision())} C`;
     }
 }
 
@@ -143,12 +322,12 @@ abstract class AppleGpuResource extends Resource {
     protected _sampler: AppleGpuSampler;
 
     constructor(config: WorkspaceConfiguration, isShownByDefault: boolean, configKey: string, sampler: AppleGpuSampler) {
-        super(config, isShownByDefault, configKey);
+        super(config, isShownByDefault, configKey, SECTION_GPU);
         this._sampler = sampler;
     }
 
     protected async isShown(): Promise<boolean> {
-        // The sampler caches briefly, so this read and the one in getDisplay()
+        // The sampler caches briefly, so this read and the one in render()
         // share a single ioreg invocation.
         let stats = await this._sampler.sample();
         return stats !== null && await super.isShown();
@@ -161,12 +340,28 @@ class GpuUsage extends AppleGpuResource {
         super(config, true, "gpu", sampler);
     }
 
-    async getDisplay(): Promise<string> {
+    async render(): Promise<ResourceRender> {
         let stats = await this._sampler.sample();
         if (stats === null) {
-            return "";
+            return { text: "", rows: [] };
         }
-        return `$(circuit-board) ${(stats.utilization).toFixed(this.getPrecision())}%`;
+
+        return {
+            text: `$(circuit-board) ${(stats.utilization).toFixed(this.getPrecision())}%`,
+            rows: this.getRows(stats),
+        };
+    }
+
+    private getRows(stats: GpuStats): DetailRow[] {
+        let rows: DetailRow[] = [];
+
+        if (stats.model !== null) {
+            let cores = stats.coreCount === null ? "" : ` · ${stats.coreCount} cores`;
+            rows.push({ label: "Graphics", value: `${stats.model}${cores}` });
+        }
+
+        rows.push({ label: "Utilization", value: this.formatPercent(stats.utilization) });
+        return rows;
     }
 }
 
@@ -176,25 +371,37 @@ class GpuMemory extends AppleGpuResource {
         super(config, false, "gpumem", sampler);
     }
 
-    async getDisplay(): Promise<string> {
+    async render(): Promise<ResourceRender> {
         let stats = await this._sampler.sample();
         if (stats === null) {
-            return "";
+            return { text: "", rows: [] };
         }
+
         let unit = this._config.get('gpu.unit', "GB");
         var memDivisor = MemMappings[unit];
         // Apple Silicon shares system memory with the CPU, so this is memory
         // currently mapped out of memory the driver has claimed, not VRAM.
         let inUseWithUnits = stats.inUseMemory / memDivisor;
         let allocatedWithUnits = stats.allocatedMemory / memDivisor;
-        return `$(server) ${(inUseWithUnits).toFixed(this.getPrecision())}/${(allocatedWithUnits).toFixed(this.getPrecision())} ${unit}`;
+
+        return {
+            text: `$(server) ${(inUseWithUnits).toFixed(this.getPrecision())}/${(allocatedWithUnits).toFixed(this.getPrecision())} ${unit}`,
+            rows: [
+                { label: "Memory in use", value: this.formatWithUnit(stats.inUseMemory, unit) },
+                { label: "Driver allocation", value: this.formatWithUnit(stats.allocatedMemory, unit) },
+            ],
+            // The one figure here people reliably misread, and the status bar
+            // has no room to say so.
+            note: "The GPU shares one pool of memory with the CPU. The allocation is what the driver "
+                + "has claimed from the system so far, not a fixed VRAM capacity, so it moves over time.",
+        };
     }
 }
 
 class Battery extends Resource {
 
     constructor(config: WorkspaceConfiguration) {
-        super(config, true, "battery");
+        super(config, true, "battery", SECTION_BATTERY);
     }
 
     protected async isShown(): Promise<boolean> {
@@ -202,33 +409,102 @@ class Battery extends Resource {
         return hasBattery && await super.isShown();
     }
 
-    async getDisplay(): Promise<string> {
+    async render(): Promise<ResourceRender> {
         let rawBattery = await si.battery();
         var percentRemaining = Math.min(Math.max(rawBattery.percent, 0), 100);
-        return `$(plug) ${percentRemaining}%`;
+
+        return {
+            text: `$(plug) ${percentRemaining}%`,
+            rows: this.getRows(rawBattery, percentRemaining),
+        };
+    }
+
+    private getRows(rawBattery: any, percentRemaining: number): DetailRow[] {
+        let rows: DetailRow[] = [
+            { label: "Charge", value: `${percentRemaining}%` },
+            { label: "State", value: this.getState(rawBattery) },
+        ];
+
+        let remaining = formatMinutes(rawBattery.timeremaining);
+        if (remaining !== null) {
+            rows.push({ label: rawBattery.ischarging ? "Until full" : "Remaining", value: remaining });
+        }
+
+        // Batteries wear: a pack holding 4600 of the 5000 mAh it was built for
+        // is at 92% health however full its charge reads.
+        if (rawBattery.designedcapacity > 0 && rawBattery.maxcapacity > 0) {
+            let health = rawBattery.maxcapacity / rawBattery.designedcapacity * 100;
+            rows.push({ label: "Health", value: `${this.formatPercent(health)} of design capacity` });
+        }
+
+        if (rawBattery.cyclecount > 0) {
+            rows.push({ label: "Cycles", value: `${rawBattery.cyclecount}` });
+        }
+
+        return rows;
+    }
+
+    private getState(rawBattery: any): string {
+        if (rawBattery.ischarging) {
+            return "Charging";
+        }
+        if (rawBattery.acconnected) {
+            return "Plugged in, not charging";
+        }
+        return "On battery";
     }
 }
 
 class Memory extends Resource {
 
     constructor(config: WorkspaceConfiguration) {
-        super(config, true, "mem");
+        super(config, true, "mem", SECTION_MEMORY);
     }
-    
-    async getDisplay() : Promise<string> {
+
+    async render() : Promise<ResourceRender> {
         let unit = this._config.get('mem.unit', "GB");
         var memDivisor = MemMappings[unit];
         let memoryData = await si.mem();
         let memoryUsedWithUnits = memoryData.active / memDivisor;
         let memoryTotalWithUnits = memoryData.total / memDivisor;
-        return `$(ellipsis) ${(memoryUsedWithUnits).toFixed(this.getPrecision())}/${(memoryTotalWithUnits).toFixed(this.getPrecision())} ${unit}`;
+
+        return {
+            text: `$(ellipsis) ${(memoryUsedWithUnits).toFixed(this.getPrecision())}/${(memoryTotalWithUnits).toFixed(this.getPrecision())} ${unit}`,
+            rows: this.getRows(memoryData, unit),
+        };
+    }
+
+    private getRows(memoryData: any, unit: string): DetailRow[] {
+        let rows: DetailRow[] = [
+            {
+                label: "In use",
+                value: `${this.formatWithUnit(memoryData.active, unit)} of ${this.formatWithUnit(memoryData.total, unit)}`
+                    + ` (${this.formatPercent(memoryData.active / memoryData.total * 100)})`,
+            },
+            { label: "Available", value: this.formatWithUnit(memoryData.available, unit) },
+        ];
+
+        // Cache is memory the system will hand back the moment anything wants
+        // it, which is why "used" so often looks alarming and is not.
+        if (memoryData.buffcache > 0) {
+            rows.push({ label: "Cached", value: this.formatWithUnit(memoryData.buffcache, unit) });
+        }
+
+        if (memoryData.swaptotal > 0) {
+            rows.push({
+                label: "Swap",
+                value: `${this.formatWithUnit(memoryData.swapused, unit)} of ${this.formatWithUnit(memoryData.swaptotal, unit)}`,
+            });
+        }
+
+        return rows;
     }
 }
 
 class DiskSpace extends Resource {
 
     constructor(config: WorkspaceConfiguration) {
-        super(config, false, "disk");
+        super(config, false, "disk", SECTION_DISK);
     }
 
     getFormat(): DiskSpaceFormat {
@@ -263,53 +539,257 @@ class DiskSpace extends Resource {
         }
     }
 
-    async getDisplay(): Promise<string> {
+    async render(): Promise<ResourceRender> {
         let fsSizes: Volume[] = await si.fsSize();
         let volumes = selectVolumes(fsSizes, this.getDrives(), process.platform);
         let formattedDrives = volumes.map(volume => this.getFormattedDiskSpace(volume));
-        return "$(database) " + formattedDrives.join(", ");
+
+        return {
+            text: "$(database) " + formattedDrives.join(", "),
+            rows: volumes.map(volume => this.getRow(volume)),
+        };
+    }
+
+    /**
+     * The disk.format setting picks one of four ways to state a volume's
+     * space for the status bar. The hover has room for all of them, so it
+     * gives the figures the setting left out.
+     */
+    private getRow(volume: Volume): DetailRow {
+        return {
+            label: volumeLabel(volume, process.platform),
+            value: `${this.convertBytesToLargestUnit(volume.used)} of ${this.convertBytesToLargestUnit(volume.size)} used`
+                + ` (${this.formatPercent(volume.use)}), ${this.convertBytesToLargestUnit(volume.size - volume.used)} free`,
+        };
+    }
+}
+
+/**
+ * One section's status bar entry: the resources it shows, and the hover that
+ * explains them.
+ */
+class SectionMonitor {
+    private _section: Section;
+    private _resources: Resource[];
+    private _delimiter: string;
+    private _item: StatusBarItem;
+    private _isVisible: boolean;
+
+    // The markdown the hover was last given, so that a sample which changed
+    // nothing does not redraw it.
+    private _markdown: string;
+
+    constructor(section: Section, resources: Resource[], alignment: StatusBarAlignment, priority: number, color: string) {
+        this._section = section;
+        this._resources = resources;
+        this._delimiter = "    ";
+        this._isVisible = false;
+        this._markdown = "";
+        this._item = this.createItem(alignment, priority, color);
+    }
+
+    public getSection(): Section {
+        return this._section;
+    }
+
+    public getResources(): Resource[] {
+        return this._resources;
+    }
+
+    public addResource(resource: Resource) {
+        this._resources.push(resource);
+    }
+
+    public getAlignment(): StatusBarAlignment {
+        return this._item.alignment;
+    }
+
+    public setColor(color: string) {
+        this._item.color = color;
+    }
+
+    /**
+     * Moves this section's entry to the other end of the status bar, which the
+     * API only allows by replacing the entry.
+     */
+    public realign(alignment: StatusBarAlignment, priority: number, color: string) {
+        this._item.dispose();
+        this._isVisible = false;
+        this._markdown = "";
+        this._item = this.createItem(alignment, priority, color);
+    }
+
+    /**
+     * Samples every resource in this section and shows the result, hiding the
+     * entry entirely when the section has nothing to report.
+     */
+    public async update(): Promise<PanelSection | null> {
+        let pendingUpdates = this._resources.map(resource => resource.getResourceRender());
+        let renders = (await Promise.all(pendingUpdates)).filter(render => render !== null) as ResourceRender[];
+
+        if (renders.length === 0) {
+            this.setVisible(false);
+            return null;
+        }
+
+        // All three from the one sample, so the reading, the hover explaining
+        // it and the panel always describe the same instant.
+        this._item.text = renders.map(render => render.text).join(this._delimiter);
+        this.setTooltip(renderTooltip(this._section, renders));
+        this.setVisible(true);
+
+        return {
+            id: this._section.id,
+            name: this._section.name,
+            rows: renders.reduce((all, render) => all.concat(render.rows), [] as DetailRow[]),
+            notes: renders.map(render => render.note).filter(note => note !== undefined) as string[],
+        };
+    }
+
+    public dispose() {
+        this._item.dispose();
+    }
+
+    private createItem(alignment: StatusBarAlignment, priority: number, color: string): StatusBarItem {
+        let item = window.createStatusBarItem(this._section.id, alignment, priority);
+        // Named, so the status bar's context menu offers "System Vitals CPU"
+        // rather than an extension identifier repeated five times.
+        item.name = `System Vitals ${this._section.name}`;
+        item.color = color;
+        // Clicking an entry opens the details panel at this section, which is
+        // also what makes VS Code give it a pointer and a hover highlight.
+        item.command = {
+            title: `Show System Vitals ${this._section.name} details`,
+            command: DETAILS_COMMAND,
+            arguments: [this._section.id],
+        };
+        return item;
+    }
+
+    private setVisible(isVisible: boolean) {
+        if (isVisible === this._isVisible) {
+            return;
+        }
+
+        this._isVisible = isVisible;
+        if (isVisible) {
+            this._item.show();
+        } else {
+            this._item.hide();
+        }
+    }
+
+    /**
+     * Hands the hover its new content, unless a sample left it saying exactly
+     * what it already said.
+     *
+     * VS Code redraws a visible hover the instant its tooltip changes, and it
+     * cannot tell that the replacement is identical, so a disk reading that
+     * held steady would otherwise flicker for nothing.
+     */
+    private setTooltip(markdown: string) {
+        if (markdown === this._markdown) {
+            return;
+        }
+
+        this._markdown = markdown;
+        this._item.tooltip = markdown === "" ? undefined : this.buildTooltip(markdown);
+    }
+
+    private buildTooltip(markdown: string): MarkdownString {
+        // The second argument renders $(icon) the way the status bar does. The
+        // hover deliberately stays untrusted: the click handles the one command
+        // worth offering, so no command link has to survive a volume name.
+        return new MarkdownString(markdown, true);
     }
 }
 
 
 class ResMon {
-    private _statusBarItem: StatusBarItem;
     private _config: WorkspaceConfiguration;
-    private _delimiter: string;
     private _updating: boolean;
-    private _resources: Resource[];
+    private _sections: SectionMonitor[];
     private _configListener: Disposable;
+    private _commandListeners: Disposable[];
+    private _extensionFilter: string;
 
-    constructor() {
+    // The view's tab appears in the panel only once a reading has been clicked,
+    // and goes away again when it is closed, so nothing is spent on a view
+    // nobody has asked for.
+    private _details: DetailsView;
+    private _snapshots: PanelSection[];
+
+    constructor(extensionFilter: string) {
         this._config = workspace.getConfiguration('systemvitals');
-        this._delimiter = "    ";
         this._updating = false;
-        this._statusBarItem = window.createStatusBarItem(this._config.get('alignLeft') ? StatusBarAlignment.Left : StatusBarAlignment.Right);
-        this._statusBarItem.color = this._getColor();
-        this._statusBarItem.show();
+        this._extensionFilter = extensionFilter;
+        this._details = new DetailsView(sectionId => this.openSettings(sectionId));
+        this._snapshots = [];
 
         // The GPU resources share one sampler so that a tick costs a single
         // read of the IOKit registry rather than one per resource.
         let gpuSampler = new AppleGpuSampler();
 
-        // Add all resources to monitor
-        this._resources = [];
-        this._resources.push(new CpuUsage(this._config));
-        this._resources.push(new CpuFreq(this._config));
-        this._resources.push(new GpuUsage(this._config, gpuSampler));
-        this._resources.push(new GpuMemory(this._config, gpuSampler));
-        this._resources.push(new Battery(this._config));
-        this._resources.push(new Memory(this._config));
-        this._resources.push(new DiskSpace(this._config));
-        this._resources.push(new CpuTemp(this._config));
+        // Add all resources to monitor. Resources sharing a section are kept
+        // together, since a section is one entry in the status bar.
+        let resources: Resource[] = [
+            new CpuUsage(this._config),
+            new CpuFreq(this._config),
+            new CpuTemp(this._config),
+            new GpuUsage(this._config, gpuSampler),
+            new GpuMemory(this._config, gpuSampler),
+            new Battery(this._config),
+            new Memory(this._config),
+            new DiskSpace(this._config),
+        ];
+
+        this._sections = this.createSections(resources, this._getAlignment());
 
         // Settings that shorten a resource's display would otherwise leave the
         // status bar padded out at the old width for the rest of the session.
         this._configListener = workspace.onDidChangeConfiguration(event => {
             if (event.affectsConfiguration('systemvitals')) {
-                this._resources.forEach(resource => resource.resetWidth());
+                this.forEachResource(resource => resource.resetWidth());
             }
         });
+
+        // Registered rather than only wired to the readings, so the view can be
+        // opened and closed from the command palette as well as by clicking.
+        this._commandListeners = [
+            commands.registerCommand(DETAILS_COMMAND, (sectionId?: string) => this.showDetails(sectionId)),
+            commands.registerCommand(HIDE_DETAILS_COMMAND, () => this._details.hide()),
+        ];
+    }
+
+    /**
+     * Opens the details view at the section that was clicked, or closes it
+     * again if that is already what it is showing.
+     */
+    private showDetails(sectionId?: string) {
+        // Clicking the reading that is already on show closes it again. The
+        // palette command arrives without a section and only ever opens, since
+        // a command called Show Details that hides them would be a poor joke.
+        if (sectionId !== undefined && this._details.isShowing(sectionId)) {
+            this._details.hide();
+            return;
+        }
+
+        // Seeded with the last sample so the view has something to show at
+        // once, rather than staying blank until the next update comes round.
+        this._details.update(this._snapshots, this._getCadence());
+        this._details.reveal(sectionId);
+    }
+
+    private openSettings(sectionId: string) {
+        let section = this._sections
+            .map(monitor => monitor.getSection())
+            .filter(candidate => candidate.id === sectionId)[0];
+        let filter = section === undefined ? this._extensionFilter : `${this._extensionFilter} ${section.settingsFilter}`;
+        commands.executeCommand(SETTINGS_COMMAND, filter);
+    }
+
+    private _getCadence(): string {
+        return `Refreshing every ${formatInterval(this._config.get('updatefrequencyms', DEFAULT_UPDATE_FREQUENCY_MS))}`;
     }
 
     public StartUpdating() {
@@ -320,7 +800,41 @@ class ResMon {
     public StopUpdating() {
         this._updating = false;
     }
-    
+
+    /**
+     * Groups the resources into one entry per section, in the order they are
+     * registered.
+     *
+     * Status bar entries are ordered by descending priority, so counting down
+     * from zero keeps the sections left to right in that same order while
+     * leaving the leftmost of them where the single entry used to sit.
+     */
+    private createSections(resources: Resource[], alignment: StatusBarAlignment): SectionMonitor[] {
+        let sections: SectionMonitor[] = [];
+        let color = this._getColor();
+
+        resources.forEach(resource => {
+            let section = resource.getSection();
+            let existing = sections.filter(candidate => candidate.getSection().id === section.id)[0];
+            if (existing !== undefined) {
+                existing.addResource(resource);
+                return;
+            }
+
+            sections.push(new SectionMonitor(section, [resource], alignment, -sections.length, color));
+        });
+
+        return sections;
+    }
+
+    private forEachResource(visit: (resource: Resource) => void) {
+        this._sections.forEach(section => section.getResources().forEach(visit));
+    }
+
+    private _getAlignment(): StatusBarAlignment {
+        return this._config.get('alignLeft') ? StatusBarAlignment.Left : StatusBarAlignment.Right;
+    }
+
     private _getColor() : string {
         const defaultColor = "#FFFFFF";
 
@@ -342,36 +856,34 @@ class ResMon {
             // pointed at the new one or they would keep reading activation-time
             // values.
             this._config = workspace.getConfiguration('systemvitals');
-            this._resources.forEach(resource => resource.setConfig(this._config));
+            this.forEachResource(resource => resource.setConfig(this._config));
 
-            // Update the status bar item's styling
-            let proposedAlignment = this._config.get('alignLeft') ? StatusBarAlignment.Left : StatusBarAlignment.Right;
-            if (proposedAlignment !== this._statusBarItem.alignment) {
-                this._statusBarItem.dispose();
-                this._statusBarItem = window.createStatusBarItem(proposedAlignment);
-                this._statusBarItem.color = this._getColor();
-                this._statusBarItem.show();
-            } else {
-                this._statusBarItem.color = this._getColor();
-            }
-
-            // Get the display of the requested resources
-            let pendingUpdates: Promise<string | null>[] = this._resources.map(resource => resource.getResourceDisplay());
-
-            // Wait for the resources to update
-            this._statusBarItem.text = await Promise.all(pendingUpdates).then(finishedUpdates => {
-                // Remove nulls, join with delimiter
-                return finishedUpdates.filter(update => update !== null).join(this._delimiter);
+            // Update each entry's styling
+            let proposedAlignment = this._getAlignment();
+            let color = this._getColor();
+            this._sections.forEach((section, index) => {
+                if (proposedAlignment !== section.getAlignment()) {
+                    section.realign(proposedAlignment, -index, color);
+                } else {
+                    section.setColor(color);
+                }
             });
 
-            setTimeout(() => this.update(), this._config.get('updatefrequencyms', 2000));
+            // Sample every section, each of which shows its own result
+            let snapshots = await Promise.all(this._sections.map(section => section.update()));
+            this._snapshots = snapshots.filter(snapshot => snapshot !== null) as PanelSection[];
+            this._details.update(this._snapshots, this._getCadence());
+
+            setTimeout(() => this.update(), this._config.get('updatefrequencyms', DEFAULT_UPDATE_FREQUENCY_MS));
         }
     }
 
     dispose() {
         this.StopUpdating();
         this._configListener.dispose();
-        this._statusBarItem.dispose();
+        this._commandListeners.forEach(listener => listener.dispose());
+        this._sections.forEach(section => section.dispose());
+        this._details.dispose();
     }
 }
 
