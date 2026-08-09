@@ -1,5 +1,8 @@
 # System Vitals
 
+[![CI](https://github.com/sachinsachdeva/systemvitals/actions/workflows/nodejs.yml/badge.svg?branch=main)](https://github.com/sachinsachdeva/systemvitals/actions/workflows/nodejs.yml)
+[![Release](https://github.com/sachinsachdeva/systemvitals/actions/workflows/release.yml/badge.svg)](https://github.com/sachinsachdeva/systemvitals/actions/workflows/release.yml)
+
 Display CPU frequency and usage, GPU utilization, memory consumption, disk space, and battery percentage in the VS Code status bar — including **native Apple Silicon GPU monitoring**, which needs no elevated privileges.
 
 > **A fork.** System Vitals is a fork of [resmon](https://github.com/Njanderson/resmon) by Nicholas Anderson, adding macOS GPU support and a modernized build. It is not affiliated with or endorsed by the original author. See [LICENSE.md](LICENSE.md) for the licensing situation, which is unresolved because the upstream project declares no license.
