@@ -6,7 +6,7 @@
     "publisher": "SachinSachdeva",
     "license": "SEE LICENSE IN LICENSE.md",
     "engines": {
-        "vscode": "^1.53.0"
+        "vscode": "^1.74.0"
     },
     "categories": [
         "Other"
@@ -28,6 +28,53 @@
     ],
     "main": "./out/extension",
     "contributes": {
+        "commands": [
+            {
+                "command": "systemvitals.showDetails",
+                "title": "Show Details",
+                "category": "System Vitals"
+            },
+            {
+                "command": "systemvitals.hideDetails",
+                "title": "Close Details",
+                "category": "System Vitals",
+                "icon": "$(close)"
+            }
+        ],
+        "menus": {
+            "view/title": [
+                {
+                    "command": "systemvitals.hideDetails",
+                    "when": "view == systemvitals.details",
+                    "group": "navigation"
+                }
+            ],
+            "commandPalette": [
+                {
+                    "command": "systemvitals.hideDetails",
+                    "when": "systemvitals.detailsRequested"
+                }
+            ]
+        },
+        "viewsContainers": {
+            "panel": [
+                {
+                    "id": "systemvitals",
+                    "title": "System Vitals",
+                    "icon": "images/icon.png"
+                }
+            ]
+        },
+        "views": {
+            "systemvitals": [
+                {
+                    "id": "systemvitals.details",
+                    "name": "Details",
+                    "type": "webview",
+                    "when": "systemvitals.detailsRequested"
+                }
+            ]
+        },
         "configuration": {
             "type": "object",
             "title": "System Vitals",
@@ -104,9 +151,9 @@
                 },
                 "systemvitals.updatefrequencyms": {
                     "type": "number",
-                    "default": 2000,
+                    "default": 10000,
                     "minimum": 200,
-                    "description": "How long in ms between updates to resources."
+                    "description": "How long in ms between updates to resources. This governs the hover details as well as the status bar, so the two always agree. VS Code redraws an open hover whenever its content changes, so short intervals make the details flicker while you are reading them."
                 },
                 "systemvitals.freq.unit": {
                     "type": "string",
@@ -168,7 +215,7 @@
     },
     "devDependencies": {
         "@types/node": "^20.19.43",
-        "@types/vscode": "1.53.0",
+        "@types/vscode": "1.74.0",
         "tslint": "^5.8.0",
         "typescript": "^5.9.3"
     }

@@ -32,6 +32,36 @@ test('does not mistake the "(driver)" sibling for in-use memory', () => {
     assert.strictEqual(stats!.inUseMemory, 356089856);
 });
 
+test('reads the accelerator name and core count for the hover', () => {
+    let stats = parsePerformanceStatistics(M4_SAMPLE);
+
+    assert.strictEqual(stats!.model, 'Apple M4');
+    assert.strictEqual(stats!.coreCount, 10);
+});
+
+test('a node that names itself nothing still reports its statistics', () => {
+    let stats = parsePerformanceStatistics('"PerformanceStatistics" = {"Device Utilization %"=42}');
+
+    assert.strictEqual(stats!.utilization, 42);
+    assert.strictEqual(stats!.model, null);
+    assert.strictEqual(stats!.coreCount, null);
+});
+
+test('the name comes from the node that supplied the statistics', () => {
+    // A Mac with a discrete GPU lists both accelerators. If the first reports
+    // no statistics, its name must not be attached to the second one's numbers.
+    let dualGpu = '+-o IntelAccelerator  <class IntelAccelerator>\n'
+        + '    {\n      "model" = "Intel UHD Graphics 630"\n      "gpu-core-count" = 24\n    }\n'
+        + '+-o AMDRadeonAccelerator  <class AMDRadeonAccelerator>\n'
+        + '    {\n      "PerformanceStatistics" = {"Device Utilization %"=88}\n'
+        + '      "model" = "AMD Radeon Pro 5500M"\n      "gpu-core-count" = 24\n    }\n';
+
+    let stats = parsePerformanceStatistics(dualGpu);
+
+    assert.strictEqual(stats!.utilization, 88);
+    assert.strictEqual(stats!.model, 'AMD Radeon Pro 5500M');
+});
+
 test('returns null rather than throwing on unusable input', () => {
     assert.strictEqual(parsePerformanceStatistics(''), null);
     assert.strictEqual(parsePerformanceStatistics('not ioreg output at all'), null);

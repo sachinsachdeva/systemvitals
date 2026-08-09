@@ -16,6 +16,10 @@ export interface GpuStats {
     inUseMemory: number;
     /** "Alloc system memory", in bytes. */
     allocatedMemory: number;
+    /** The accelerator's "model", such as "Apple M4". Null when the node does not name itself. */
+    model: string | null;
+    /** The accelerator's "gpu-core-count". Null when the node does not report one. */
+    coreCount: number | null;
 }
 
 // Recurse one level from each IOAccelerator node so we pick up its properties,
@@ -33,6 +37,12 @@ const IOREG_MAX_BUFFER: number = 4 * 1024 * 1024;
 const CACHE_WINDOW_MS: number = 100;
 
 const PERFORMANCE_STATISTICS_PATTERN = /"PerformanceStatistics" = \{([^}]*)\}/;
+
+// Descriptive properties sit beside PerformanceStatistics in the same node,
+// either side of it, so they are read from the start of that node onwards.
+const NODE_MARKER = '+-o ';
+const MODEL_PATTERN = /"model" = "([^"]*)"/;
+const CORE_COUNT_PATTERN = /"gpu-core-count" = (\d+)/;
 
 /**
  * Extracts GPU statistics from the output of
@@ -57,11 +67,28 @@ export function parsePerformanceStatistics(ioregOutput: string): GpuStats | null
         return null;
     }
 
+    // Anchored at the node that supplied the statistics, so a machine whose
+    // first accelerator reports nothing cannot lend its name to the second.
+    let node: string = ioregOutput.slice(nodeStart(ioregOutput, statisticsBlock.index));
+    let model = MODEL_PATTERN.exec(node);
+    let coreCount = CORE_COUNT_PATTERN.exec(node);
+
     return {
         utilization: utilization,
         inUseMemory: readStatistic(statistics, "In use system memory") || 0,
         allocatedMemory: readStatistic(statistics, "Alloc system memory") || 0,
+        model: model === null ? null : model[1],
+        coreCount: coreCount === null ? null : parseInt(coreCount[1], 10),
     };
+}
+
+/**
+ * Where the node containing the given offset begins, or the start of the dump
+ * when the output carries no node headers at all.
+ */
+function nodeStart(ioregOutput: string, offset: number): number {
+    let start: number = ioregOutput.lastIndexOf(NODE_MARKER, offset);
+    return start === -1 ? 0 : start;
 }
 
 /**
