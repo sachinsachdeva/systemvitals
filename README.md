@@ -1,5 +1,7 @@
 # System Vitals
 
+[![Marketplace](https://badgen.net/vs-marketplace/v/SachinSachdeva.system-vitals)](https://marketplace.visualstudio.com/items?itemName=SachinSachdeva.system-vitals)
+[![Installs](https://badgen.net/vs-marketplace/i/SachinSachdeva.system-vitals)](https://marketplace.visualstudio.com/items?itemName=SachinSachdeva.system-vitals)
 [![CI](https://github.com/sachinsachdeva/systemvitals/actions/workflows/nodejs.yml/badge.svg?branch=main)](https://github.com/sachinsachdeva/systemvitals/actions/workflows/nodejs.yml)
 [![Release](https://github.com/sachinsachdeva/systemvitals/actions/workflows/release.yml/badge.svg)](https://github.com/sachinsachdeva/systemvitals/actions/workflows/release.yml)
 
